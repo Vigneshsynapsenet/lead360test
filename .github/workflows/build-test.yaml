@@ -1,0 +1,59 @@
+name: build-test
+run-name: ${{ github.actor }} is testing
+on: [push]
+
+jobs:
+  job1:
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo "The job is running on ${{ runner.os }}"
+      - run: echo "Branch ${{ github.ref }} and repo ${{ github.repository }}"
+      - name: checkout repository code
+        uses: actions/checkout@v4
+      - run: echo "${{ github.repository }} cloned and is ready"
+      - run: echo "${{ job.status }}"
+      - name: Node.js
+        uses: actions/setup-node@v4.0.3
+        with:
+          node-version-file: package.json
+      - name: NVM, Yarn
+        run: |
+          sudo apt-get install curl
+          curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/master/install.sh | bash
+          corepack enable
+      - name: postgres
+        run: make postgres-on-linux
+      - name: yarn
+        run: yarn
+      - name: environment
+        run: |
+          cp ./packages/twenty-front/.env.example ./packages/twenty-front/.env
+          cp ./packages/twenty-server/.env.example ./packages/twenty-server/.env
+      - name: start twenty
+        run: |
+          npx nx database:reset twenty-server
+          npx nx build twenty-server
+          npx nx build twenty-front
+
+  job2:
+    needs: job1
+    runs-on: ubuntu-latest
+    steps:
+      - name: lead360db
+        uses: docker/build-push-action@v6.4.0
+        with: 
+          file: ./DockerfileDB
+          tags: db360:latest
+      - name: lead360
+        uses: docker/build-push-action@v6.4.0
+        with: 
+          file: ./Dockerfile
+          tags: latest
+      - name: digitalocean doctl
+        uses: digitalocean/action-doctl@v2.5.1
+        with:
+          token: ${{ secrets.DIGITALOCEAN_ACCESS_TOKEN }}
+      - run: |
+          echo ${{ secrets.DIGITALOCEAN_ACCESS_TOKEN }} | docker login registry.digitalocean.com -u doctl --password-stdin
+          docker tag db360:latest registry.digitalocean.com/twentydocker/d360
+          docker push registry.digitalocean.com/twentydocker/d360
