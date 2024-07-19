@@ -29,7 +29,7 @@ jobs:
         run: |
           cp ./packages/twenty-front/.env.example ./packages/twenty-front/.env
           cp ./packages/twenty-server/.env.example ./packages/twenty-server/.env
-      - name: start twenty
+      - name: Build twenty
         run: |
           npx nx database:reset twenty-server
           npx nx build twenty-server
@@ -39,22 +39,65 @@ jobs:
     needs: job1
     runs-on: ubuntu-latest
     steps:
-      - name: lead360db
-        uses: docker/build-push-action@v6.4.0
-        with: 
-          file: ./DockerfileDB
-          tags: db360:latest
-      - name: lead360
-        uses: docker/build-push-action@v6.4.0
-        with: 
-          file: ./Dockerfile
-          tags: latest
+      # - name: lead360db
+      #   uses: docker/build-push-action@v6.4.0
+      #   with: 
+      #     file: ./DockerfileDB
+      #     tags: db360:latest
+      # - name: lead360
+      #   uses: docker/build-push-action@v6.4.0
+      #   with: 
+      #     file: ./Dockerfile
+      #     tags: latest
+      - name: checkout code
+        uses: actions/chekout@v4
+        
       - name: digitalocean doctl
         uses: digitalocean/action-doctl@v2.5.1
         with:
           no_auth: FALSE
           token: ${{secrets.DIGITALOCEAN_ACCESS_TOKEN}}
-      - run: |
-          echo ${{ secrets.DIGITALOCEAN_ACCESS_TOKEN }} | docker login registry.digitalocean.com -u doctl --password-stdin
-          docker tag db360:latest registry.digitalocean.com/twentydocker/d360
-          docker push registry.digitalocean.com/twentydocker/d360
+      - name: setup environement variables
+        run: |
+              cp ./packages/twenty-server/.env.example ./packages/twenty-server/.env
+
+      - name: config map and secrets
+        run: |
+             sed -i "s|<POSTGRES_DB>|${{ secrets.POSTGRES_DB }} | base64 |" ./lead360.yaml
+             sed -i "s|<POSTGRES_USER>|${{ secrets.POSTGRES_USER }} | base64 |" ./lead360.yaml
+             sed -i "s|<POSTGRES_PASSWORD>|${{ secrets.POSTGRES_PASSWORD }} | base64 |" .lead360.yaml
+             sed -i "s|<ACCESS_TOKEN_SECRET>|${{ secrets.POSTGRES_ACCESS_TOKEN_SECRET }} | base64 |" ./lead360.yaml
+             sed -i "s|<LOGIN_TOKEN_SECRET>|${{ secrets.POSTGRES_LOGIN_TOKEN_SECRET }} | base64 |" ./lead360.yaml
+             sed -i "s|<REFRESH_TOKEN_SECRET>|${{ secrets.POSTGRES_REFRESH_TOKEN_SECRET }} | base64 |" ./lead360.yaml
+             sed -i "s|<SIGN_IN_PREFILLED>|${{ secrets.POSTGRES_SIGN_IN_PREFILLED }} | base64 |" ./lead360.yaml
+       
+      - name: build DB
+        run: docker build -t ${{ secrets.REGISTRY_NAME }}/db:latest -f ./DockerfileDB .
+        
+      - name: build lead360
+        run: docer build -t ${{ secrets.REGISTRY_NAME }}/lead360v1:latest -f ./DOckerfile . 
+
+      - name: login ergistry
+        run : doctl registry login 
+
+      - name: push db 
+        run: docker push ${{ secrets.REGISTRY_NAME }}/db:latest
+
+      - name: push lead360
+        run: docker push ${{ secrets.REGISTRY_NAME }}/lead360v1:latest
+
+      - name : Apply Deployment
+        run : kubectl apply -f ./lead360.yaml 
+
+      - name: save cluster digital ocean
+        run: doctl kubernetes cluster kubeconfig save --expiry-seconds 600 ${{ secrets.CLUSTER_NAME }}
+
+      - name: restart db
+        run: kubectl rollout restart deployment/lead360db-deployment
+
+      - name: restart lead360
+        run: kubectl roolout restart deployment/lead360-deployment
+      # - run: |
+      #     echo ${{ secrets.DIGITALOCEAN_ACCESS_TOKEN }} | docker login registry.digitalocean.com -u doctl --password-stdin
+      #     docker tag db360:latest registry.digitalocean.com/twentydocker/d360
+      #     docker push registry.digitalocean.com/twentydocker/d360
